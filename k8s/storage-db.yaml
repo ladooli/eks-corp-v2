@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage-db
+spec:
+  serviceName: storage-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage-db
+  template:
+    metadata:
+      labels:
+        app: storage-db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        envFrom:
+        - secretRef:
+            name: storage-db-secret
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres"]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-db
+spec:
+  selector:
+    app: storage-db
+  ports:
+  - port: 5432
+    targetPort: 5432

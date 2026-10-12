@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: storage
+  template:
+    metadata:
+      labels:
+        app: storage
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: storage
+      containers:
+      - name: storage
+        # Replace <AWS_ACCOUNT_ID> with your account ID (see: terraform output ecr_backend_url)
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/eks-corp/backend:v1
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DB_HOST
+          value: storage-db
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: storage-db-secret
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: storage-db-secret
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: storage-db-secret
+              key: POSTGRES_PASSWORD
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-service
+spec:
+  selector:
+    app: storage
+  ports:
+  - port: 3000
+    targetPort: 3000
