@@ -9,3 +9,11 @@ output "cluster_name" {
 output "configure_kubectl" {
   value = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name}"
 }
+
+output "rds_endpoint" {
+  value = aws_db_instance.main.address
+}
+
+output "rds_master_secret_arn" {
+  value = aws_db_instance.main.master_user_secret[0].secret_arn
+}
