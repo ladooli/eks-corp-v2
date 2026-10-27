@@ -1,3 +1,8 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: storage
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,6 +17,7 @@ spec:
       labels:
         app: storage
     spec:
+      serviceAccountName: storage
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: topology.kubernetes.io/zone
@@ -21,28 +27,21 @@ spec:
             app: storage
       containers:
       - name: storage
-        # Replace <AWS_ACCOUNT_ID> with your account ID (see: terraform output ecr_backend_url)
-        image: <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/eks-corp/backend:v1
+        # Replace <AWS_ACCOUNT_ID> and <RDS_ENDPOINT> at deploy time (see README)
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/eks-corp/backend:v2
         ports:
         - containerPort: 3000
         env:
         - name: DB_HOST
-          value: storage-db
+          value: <RDS_ENDPOINT>
         - name: DB_NAME
-          valueFrom:
-            secretKeyRef:
-              name: storage-db-secret
-              key: POSTGRES_DB
+          value: storagedb
         - name: DB_USER
-          valueFrom:
-            secretKeyRef:
-              name: storage-db-secret
-              key: POSTGRES_USER
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: storage-db-secret
-              key: POSTGRES_PASSWORD
+          value: storage_app
+        - name: DB_IAM_AUTH
+          value: "true"
+        - name: AWS_REGION
+          value: eu-north-1
         readinessProbe:
           httpGet:
             path: /healthz

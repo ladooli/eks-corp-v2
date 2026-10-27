@@ -4,3 +4,4 @@
 *.tfvars
 k8s/secret.yaml
 terraform/.helm/
+node_modules/

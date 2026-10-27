@@ -26,6 +26,7 @@ resource "aws_db_instance" "main" {
   db_name                     = "storagedb"
   username                    = "dbadmin"
   manage_master_user_password = true
+  iam_database_authentication_enabled = true
 
   multi_az               = true
   db_subnet_group_name   = module.vpc.database_subnet_group_name
