@@ -59,6 +59,9 @@ What the stack does end to end:
   PersistentVolumeClaim automatically becomes an encrypted gp3 EBS volume
 - A Node.js backend is pulled from a private ECR repository and runs with three
   replicas, one in each zone, next to a PostgreSQL StatefulSet on an EBS volume
+- The AWS Load Balancer Controller, installed with Helm from Terraform and authorized
+  through Pod Identity, turns a Kubernetes Ingress into an internet-facing Application
+  Load Balancer: the single public entry point of the cluster
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -69,6 +72,7 @@ What the stack does end to end:
 * [![Amazon EKS][eks-shield]][eks-url]
 * [![Amazon ECR][ecr-shield]][ecr-url]
 * [![Kubernetes][k8s-shield]][k8s-url]
+* [![Helm][helm-shield]][helm-url]
 * [![Docker][docker-shield]][docker-url]
 * [![Node.js][node-shield]][node-url]
 * [![Express][express-shield]][express-url]
@@ -81,10 +85,10 @@ What the stack does end to end:
 ```
                           Internet
                              │
-                   (planned) ALB  ◄── AWS Load Balancer Controller
+                   ALB (HTTP :80)  ◄── AWS Load Balancer Controller
                              │
 ┌──────────────────────── VPC 10.0.0.0/16 · eu-north-1 ─────────────────────────┐
-│  PUBLIC subnets      NAT Gateway                [ALB – planned]                │
+│  PUBLIC subnets      NAT Gateway                ALB → pod IPs (target-type ip) │
 │                                                                                │
 │  PRIVATE subnets                                                               │
 │   ┌─ eu-north-1a ──────┐  ┌─ eu-north-1b ──────┐  ┌─ eu-north-1c ──────┐       │
@@ -102,9 +106,16 @@ What the stack does end to end:
 
 **Design decisions**
 
-- **Private worker nodes.** Nodes have no public IP. The public subnets hold only the
-  NAT gateway now, and later the load balancer, which will be the single public entry
-  point.
+- **Private worker nodes, one public entry point.** Nodes have no public IP. The public
+  subnets hold only the NAT gateway and the ALB, which is the single way in from the
+  internet. The backend Service stays `ClusterIP`.
+- **ALB straight to pod IPs.** The Ingress uses `target-type: ip`, so the ALB sends
+  traffic directly to the pods (they have real VPC IPs through the VPC CNI) and
+  health-checks `/healthz` on each pod, with no extra hop through the nodes.
+- **Load Balancer Controller as code.** The controller is a Terraform `helm_release`
+  with a pinned chart version, and its IAM permissions come from Pod Identity. The
+  Helm provider uses its own repository config inside the project, so the setup does
+  not depend on the Helm repositories configured on a developer's machine.
 - **One node and one backend pod per zone.** The Auto Scaling Group spreads nodes
   across three AZs, and `topologySpreadConstraints` (`maxSkew: 1`) spreads the backend
   pods the same way, so losing one zone leaves the API running.
@@ -138,13 +149,15 @@ eks-corp-v2/
 │   ├── storageclass.yaml        # gp3, encrypted, WaitForFirstConsumer
 │   ├── secret.example.yaml      # Template for the DB secret (real one is git-ignored)
 │   ├── storage-db.yaml          # PostgreSQL StatefulSet + Service
-│   └── storage.yaml             # Backend Deployment + Service
+│   ├── storage.yaml             # Backend Deployment + Service
+│   └── ingress.yaml             # Internet-facing ALB in front of the backend
 └── terraform/
-    ├── providers.tf             # AWS provider, default tags
+    ├── providers.tf             # AWS and Helm providers, default tags
     ├── variables.tf             # Region and project name
     ├── vpc.tf                   # VPC, subnets in 3 AZs, NAT gateway, LB subnet tags
     ├── eks.tf                   # EKS cluster, addons, managed node group
     ├── iam.tf                   # Pod Identity IAM role for the EBS CSI driver
+    ├── lb-controller.tf         # AWS Load Balancer Controller: Pod Identity + Helm release
     ├── ecr.tf                   # Private ECR repository, scan on push
     └── outputs.tf               # Cluster name, kubeconfig command, ECR URL
 ```
@@ -157,15 +170,15 @@ eks-corp-v2/
 
 - An AWS account with programmatic access configured
 
-```sh
+  ```sh
   aws configure
-```
+  ```
 
 - Terraform 1.6 or newer
 
-```sh
+  ```sh
   terraform -version
-```
+  ```
 
 - kubectl and Docker
 
@@ -173,54 +186,61 @@ eks-corp-v2/
 
 1. Clone the repository
 
-```sh
+   ```sh
    git clone https://github.com/ladooli/eks-corp-v2.git
    cd eks-corp-v2
-```
+   ```
 
 2. Create the infrastructure (takes about 15–20 minutes)
 
-```sh
+   ```sh
    cd terraform
    terraform init
    terraform plan
    terraform apply
-```
+   ```
 
 3. Connect kubectl to the new cluster
 
-```sh
+   ```sh
    aws eks update-kubeconfig --region eu-north-1 --name eks-corp-cluster
    kubectl get nodes -L topology.kubernetes.io/zone
-```
+   ```
 
 4. Build the backend image and push it to the private ECR repository. The repository
    URL is printed by `terraform output ecr_backend_url`.
 
-```sh
+   ```sh
    aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com
    docker build -t <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/eks-corp/backend:v1 ../app/storage
    docker push <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/eks-corp/backend:v1
-```
+   ```
 
    > On Windows PowerShell the piped login can fail with `400 Bad Request`. Use
    > `docker login --username AWS --password (aws ecr get-login-password --region eu-north-1) <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com`
 
 5. Create the database secret from the template and set your own password
 
-```sh
+   ```sh
    cd ..
    cp k8s/secret.example.yaml k8s/secret.yaml
-```
+   ```
 
 6. Set your account ID in the `image` field of `k8s/storage.yaml`, then deploy
 
-```sh
+   ```sh
    kubectl apply -f k8s/storageclass.yaml
    kubectl apply -f k8s/secret.yaml
    kubectl apply -f k8s/storage-db.yaml
    kubectl apply -f k8s/storage.yaml
-```
+   kubectl apply -f k8s/ingress.yaml
+   ```
+
+7. Wait 2–3 minutes until the ALB is active, then get its address
+
+   ```sh
+   kubectl get ingress storage-ingress
+   ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -236,14 +256,11 @@ kubectl get pvc
 
 The PVC should be `Bound`, which means the EBS CSI driver created a gp3 volume in AWS.
 
-There is no public load balancer yet, so reach the backend through a port-forward:
+The backend is reachable through the ALB. Take the address from the `ADDRESS` column
+of `kubectl get ingress storage-ingress`:
 
 ```sh
-kubectl port-forward svc/storage-service 8080:3000
-```
-
-```sh
-curl http://localhost:8080/healthz
+curl http://<ALB_ADDRESS>/healthz
 ```
 
 ```json
@@ -251,7 +268,7 @@ curl http://localhost:8080/healthz
 ```
 
 ```sh
-curl http://localhost:8080/files
+curl http://<ALB_ADDRESS>/files
 ```
 
 ```json
@@ -261,10 +278,13 @@ curl http://localhost:8080/files
 The empty list is the important one: it shows the backend reached PostgreSQL and
 created its table.
 
-Tear everything down when you are finished. Kubernetes-created AWS resources (the EBS
-volume) are not in the Terraform state, so delete them first:
+Tear everything down when you are finished. Kubernetes-created AWS resources (the ALB
+and the EBS volume) are not in the Terraform state, so delete them first. The Ingress
+must go before `terraform destroy`, while the Load Balancer Controller is still running
+to remove the ALB:
 
 ```sh
+kubectl delete -f k8s/ingress.yaml
 kubectl delete -f k8s/storage.yaml
 kubectl delete -f k8s/storage-db.yaml
 kubectl delete pvc --all
@@ -282,11 +302,14 @@ terraform destroy
 - **No real secrets in the repository.** Only `secret.example.yaml` with a placeholder
   password is committed; `k8s/secret.yaml` is git-ignored. The backend reads all
   database settings from environment variables.
-- **No static AWS keys in the cluster.** Nodes pull from ECR with the node IAM role,
-  and the EBS CSI driver uses Pod Identity.
+- **No static AWS keys in the cluster.** Nodes pull from ECR with the node IAM role;
+  the EBS CSI driver and the Load Balancer Controller each have their own Pod Identity
+  role.
 - **Kubernetes Secrets are only base64-encoded.** For the managed database the plan is
   IAM database authentication through Pod Identity, so no static DB password is needed
   at all.
+- **HTTP only for now.** HTTPS needs a domain and an ACM certificate on the ALB
+  listener; it is on the roadmap.
 - **The EKS API endpoint is public** but protected by IAM authentication and EKS access
   entries. It should be restricted to known IP ranges with
   `endpoint_public_access_cidrs`.
@@ -310,6 +333,13 @@ terraform destroy
   makes PostgreSQL refuse to initialize; pointing `PGDATA` to a subdirectory solves it.
 - **Liveness probes should not depend on other services,** or one failing service
   restarts the healthy ones too.
+- **Tooling can leak local state into infrastructure code.** The Terraform Helm
+  provider read the global Helm repository list on my machine and failed on a stale
+  entry. Giving the provider its own repository config inside the project made the
+  setup reproducible on any machine.
+- **Pod Identity credentials are injected when a pod starts.** The association has to
+  exist before the controller pod is created, which is why the Helm release
+  `depends_on` the Pod Identity module.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -321,7 +351,9 @@ terraform destroy
 - [x] EBS CSI driver with Pod Identity and an encrypted gp3 StorageClass
 - [x] Private ECR repository with scan on push
 - [x] Backend spread across zones, PostgreSQL StatefulSet on EBS
-- [ ] AWS Load Balancer Controller + Ingress → one ALB with HTTPS (ACM)
+- [x] AWS Load Balancer Controller with Pod Identity (Helm, managed by Terraform)
+- [x] Internet-facing ALB Ingress with IP targets
+- [ ] HTTPS on the ALB with an ACM certificate (requires a domain)
 - [ ] RDS PostgreSQL Multi-AZ with IAM database authentication via Pod Identity
 - [ ] metrics-server + HorizontalPodAutoscaler, PodDisruptionBudget
 - [ ] Cluster Autoscaler or Karpenter for node scaling
@@ -357,3 +389,5 @@ Project link: [https://github.com/ladooli/eks-corp-v2](https://github.com/ladool
 [ecr-url]: https://aws.amazon.com/ecr/
 [express-shield]: https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white
 [express-url]: https://expressjs.com/
+[helm-shield]: https://img.shields.io/badge/Helm-0F1689?style=for-the-badge&logo=helm&logoColor=white
+[helm-url]: https://helm.sh/
