@@ -20,6 +20,7 @@ module "eks" {
     }
     kube-proxy = {}
     coredns    = {}
+    metrics-server = {}
     aws-ebs-csi-driver = {
       pod_identity_association = [{
         role_arn        = aws_iam_role.ebs_csi.arn
