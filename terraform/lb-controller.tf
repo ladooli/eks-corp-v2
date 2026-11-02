@@ -32,5 +32,5 @@ resource "helm_release" "aws_lb_controller" {
     }
   })]
 
-  depends_on = [module.aws_lb_controller_pod_identity]
+  depends_on = [module.eks, module.aws_lb_controller_pod_identity]
 }
