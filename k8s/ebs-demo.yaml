@@ -3,7 +3,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: ebs-demo-data
 spec:
-  accessModes: ["ReadWriteOnce"]
+  accessModes: ["ReadWriteOncePod"]
   storageClassName: gp3
   resources:
     requests:
@@ -31,7 +31,7 @@ spec:
         command:
         - sh
         - -c
-        - while true; do echo "$(date -u) written by $HOSTNAME" >> /data/log.txt; sleep 30; done
+        - trap 'exit 0' TERM; while true; do echo "$(date -u) written by $HOSTNAME" >> /data/log.txt; sleep 30 & wait $!; done
         volumeMounts:
         - name: data
           mountPath: /data
