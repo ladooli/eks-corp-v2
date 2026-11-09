@@ -2,7 +2,7 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.0"
 
-  name = "${var.project_name}-cluster"
+  name               = "${var.project_name}-cluster"
   kubernetes_version = "1.36"
 
   endpoint_public_access                   = true
@@ -18,8 +18,8 @@ module "eks" {
     eks-pod-identity-agent = {
       before_compute = true
     }
-    kube-proxy = {}
-    coredns    = {}
+    kube-proxy     = {}
+    coredns        = {}
     metrics-server = {}
     aws-ebs-csi-driver = {
       pod_identity_association = [{
