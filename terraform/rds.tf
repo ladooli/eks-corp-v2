@@ -23,9 +23,9 @@ resource "aws_db_instance" "main" {
   storage_type      = "gp3"
   storage_encrypted = true
 
-  db_name                     = "storagedb"
-  username                    = "dbadmin"
-  manage_master_user_password = true
+  db_name                             = "storagedb"
+  username                            = "dbadmin"
+  manage_master_user_password         = true
   iam_database_authentication_enabled = true
 
   multi_az               = true

@@ -2,11 +2,26 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.0"
 
-  name = "${var.project_name}-cluster"
+  name               = "${var.project_name}-cluster"
   kubernetes_version = "1.36"
 
   endpoint_public_access                   = true
   enable_cluster_creator_admin_permissions = true
+
+  access_entries = {
+    github_actions = {
+      principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/eks-corp-github-actions"
+
+      policy_associations = {
+        view = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  }
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
@@ -18,8 +33,8 @@ module "eks" {
     eks-pod-identity-agent = {
       before_compute = true
     }
-    kube-proxy = {}
-    coredns    = {}
+    kube-proxy     = {}
+    coredns        = {}
     metrics-server = {}
     aws-ebs-csi-driver = {
       pod_identity_association = [{
