@@ -1,6 +1,7 @@
-variable "github_repository" {
-  type    = string
-  default = "ladooli/eks-corp-v2"
+variable "github_oidc_subject" {
+  description = "OIDC sub claim of this repository's pull request workflows (immutable owner and repo IDs)"
+  type        = string
+  default     = "repo:ladooli@232176325/eks-corp-v2@1415238663:pull_request"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -27,7 +28,7 @@ data "aws_iam_policy_document" "github_actions_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:pull_request"]
+      values   = [var.github_oidc_subject]
     }
   }
 }
